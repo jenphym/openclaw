@@ -27,7 +27,7 @@ jobs:
           chmod 600 ~/.ssh/id_ed25519
           ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-      - name: Sync upstream branch to SYNC
+      - name: Sync upstream branch
         run: |
           set -euo pipefail
 
@@ -36,8 +36,8 @@ jobs:
 
           git remote add private git@github.com:${{ secrets.TARGET_OWNER }}/${{ secrets.TARGET_REPO }}.git
 
-          echo "==> Force sync next -> SYNC"
-          git push --force private refs/heads/next:refs/heads/SYNC
+          echo "==> Force sync"
+          git push --force private refs/heads/main:refs/heads/main
 
           echo "==> Sync tags"
           git push --force private refs/tags/*:refs/tags/*
