@@ -37,7 +37,7 @@ jobs:
           git remote add private git@github.com:${{ secrets.TARGET_OWNER }}/${{ secrets.TARGET_REPO }}.git
 
           echo "==> Force sync"
-          git push --force private refs/heads/main:refs/heads/main
+          git push --force private refs/heads/main:refs/heads/SYNC
 
           echo "==> Sync tags"
           git push --force private refs/tags/*:refs/tags/*
