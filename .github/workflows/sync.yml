@@ -1,0 +1,43 @@
+name: Sync
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  sync:
+    if: github.repository_owner == 'jenphym' && github.event.repository.name == 'openclaw'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Setup SSH for deploy key
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          echo "${{ secrets.DEPLOY_KEY }}" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Sync upstream branch to SYNC
+        run: |
+          set -euo pipefail
+
+          git config user.name "upstream-sync-bot"
+          git config user.email "upstream-sync-bot@users.noreply.github.com"
+
+          git remote add private git@github.com:${{ secrets.TARGET_OWNER }}/${{ secrets.TARGET_REPO }}.git
+
+          echo "==> Force sync next -> SYNC"
+          git push --force private refs/heads/next:refs/heads/SYNC
+
+          echo "==> Sync tags"
+          git push --force private refs/tags/*:refs/tags/*
