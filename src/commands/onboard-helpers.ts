@@ -1,13 +1,12 @@
-import { cancel, isCancel } from "@clack/prompts";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { inspect } from "node:util";
-import type { OpenClawConfig } from "../config/config.js";
-import type { RuntimeEnv } from "../runtime.js";
-import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
+import { cancel, isCancel } from "@clack/prompts";
 import { DEFAULT_AGENT_WORKSPACE_DIR, ensureAgentWorkspace } from "../agents/workspace.js";
+import type { OpenClawConfig } from "../config/config.js";
 import { CONFIG_PATH } from "../config/config.js";
+import { resolveAgentModelPrimaryValue } from "../config/model-input.js";
 import { resolveSessionTranscriptsDirForAgent } from "../config/sessions.js";
 import { callGateway } from "../gateway/call.js";
 import { normalizeControlUiBasePath } from "../gateway/control-ui-shared.js";
@@ -16,6 +15,7 @@ import { isSafeExecutableValue } from "../infra/exec-safety.js";
 import { pickPrimaryTailnetIPv4 } from "../infra/tailnet.js";
 import { isWSL } from "../infra/wsl.js";
 import { runCommandWithTimeout } from "../process/exec.js";
+import type { RuntimeEnv } from "../runtime.js";
 import { stylePromptTitle } from "../terminal/prompt-style.js";
 import {
   CONFIG_DIR,
@@ -26,11 +26,13 @@ import {
 } from "../utils.js";
 import { GATEWAY_CLIENT_MODES, GATEWAY_CLIENT_NAMES } from "../utils/message-channel.js";
 import { VERSION } from "../version.js";
+import type { NodeManagerChoice, OnboardMode, ResetScope } from "./onboard-types.js";
 
 export function guardCancel<T>(value: T | symbol, runtime: RuntimeEnv): T {
   if (isCancel(value)) {
     cancel(stylePromptTitle("Setup cancelled.") ?? "Setup cancelled.");
     runtime.exit(0);
+    throw new Error("unreachable");
   }
   return value;
 }
@@ -42,7 +44,7 @@ export function summarizeExistingConfig(config: OpenClawConfig): string {
     rows.push(shortenHomeInString(`workspace: ${defaults.workspace}`));
   }
   if (defaults?.model) {
-    const model = typeof defaults.model === "string" ? defaults.model : defaults.model.primary;
+    const model = resolveAgentModelPrimaryValue(defaults.model);
     if (model) {
       rows.push(shortenHomeInString(`model: ${model}`));
     }
@@ -73,7 +75,27 @@ export function normalizeGatewayTokenInput(value: unknown): string {
   if (typeof value !== "string") {
     return "";
   }
-  return value.trim();
+  const trimmed = value.trim();
+  // Reject the literal string "undefined" — a common bug when JS undefined
+  // gets coerced to a string via template literals or String(undefined).
+  if (trimmed === "undefined" || trimmed === "null") {
+    return "";
+  }
+  return trimmed;
+}
+
+export function validateGatewayPasswordInput(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return "Required";
+  }
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return "Required";
+  }
+  if (trimmed === "undefined" || trimmed === "null") {
+    return 'Cannot be the literal string "undefined" or "null"';
+  }
+  return undefined;
 }
 
 export function printWizardHeader(runtime: RuntimeEnv) {
@@ -434,6 +456,22 @@ function summarizeError(err: unknown): string {
 
 export const DEFAULT_WORKSPACE = DEFAULT_AGENT_WORKSPACE_DIR;
 
+function pickPrimaryTailnetIPv4ForDisplay(): string | undefined {
+  try {
+    return pickPrimaryTailnetIPv4();
+  } catch {
+    return undefined;
+  }
+}
+
+function pickPrimaryLanIPv4ForDisplay(): string | undefined {
+  try {
+    return pickPrimaryLanIPv4();
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveControlUiLinks(params: {
   port: number;
   bind?: "auto" | "lan" | "loopback" | "custom" | "tailnet";
@@ -443,7 +481,7 @@ export function resolveControlUiLinks(params: {
   const port = params.port;
   const bind = params.bind ?? "loopback";
   const customBindHost = params.customBindHost?.trim();
-  const tailnetIPv4 = pickPrimaryTailnetIPv4();
+  const tailnetIPv4 = pickPrimaryTailnetIPv4ForDisplay();
   const host = (() => {
     if (bind === "custom" && customBindHost && isValidIPv4(customBindHost)) {
       return customBindHost;
@@ -452,7 +490,7 @@ export function resolveControlUiLinks(params: {
       return tailnetIPv4 ?? "127.0.0.1";
     }
     if (bind === "lan") {
-      return pickPrimaryLanIPv4() ?? "127.0.0.1";
+      return pickPrimaryLanIPv4ForDisplay() ?? "127.0.0.1";
     }
     return "127.0.0.1";
   })();

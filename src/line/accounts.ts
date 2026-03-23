@@ -1,5 +1,15 @@
-import fs from "node:fs";
+import {
+  listCombinedAccountIds,
+  resolveListedDefaultAccountId,
+} from "../channels/plugins/account-helpers.js";
 import type { OpenClawConfig } from "../config/config.js";
+import { tryReadSecretFileSync } from "../infra/secret-file.js";
+import {
+  DEFAULT_ACCOUNT_ID,
+  normalizeAccountId as normalizeSharedAccountId,
+  normalizeOptionalAccountId,
+} from "../routing/account-id.js";
+import { resolveAccountEntry } from "../routing/account-lookup.js";
 import type {
   LineConfig,
   LineAccountConfig,
@@ -7,17 +17,10 @@ import type {
   LineTokenSource,
 } from "./types.js";
 
-export const DEFAULT_ACCOUNT_ID = "default";
+export { DEFAULT_ACCOUNT_ID } from "../routing/account-id.js";
 
 function readFileIfExists(filePath: string | undefined): string | undefined {
-  if (!filePath) {
-    return undefined;
-  }
-  try {
-    return fs.readFileSync(filePath, "utf-8").trim();
-  } catch {
-    return undefined;
-  }
+  return tryReadSecretFileSync(filePath, "LINE credential file", { rejectSymlink: true });
 }
 
 function resolveToken(params: {
@@ -100,10 +103,12 @@ export function resolveLineAccount(params: {
   cfg: OpenClawConfig;
   accountId?: string;
 }): ResolvedLineAccount {
-  const { cfg, accountId = DEFAULT_ACCOUNT_ID } = params;
+  const cfg = params.cfg;
+  const accountId = normalizeSharedAccountId(params.accountId);
   const lineConfig = cfg.channels?.line as LineConfig | undefined;
   const accounts = lineConfig?.accounts;
-  const accountConfig = accountId !== DEFAULT_ACCOUNT_ID ? accounts?.[accountId] : undefined;
+  const accountConfig =
+    accountId !== DEFAULT_ACCOUNT_ID ? resolveAccountEntry(accounts, accountId) : undefined;
 
   const { token, tokenSource } = resolveToken({
     accountId,
@@ -117,8 +122,16 @@ export function resolveLineAccount(params: {
     accountConfig,
   });
 
+  const {
+    accounts: _ignoredAccounts,
+    defaultAccount: _ignoredDefaultAccount,
+    ...lineBase
+  } = (lineConfig ?? {}) as LineConfig & {
+    accounts?: unknown;
+    defaultAccount?: unknown;
+  };
   const mergedConfig: LineConfig & LineAccountConfig = {
-    ...lineConfig,
+    ...lineBase,
     ...accountConfig,
   };
 
@@ -142,40 +155,34 @@ export function resolveLineAccount(params: {
 
 export function listLineAccountIds(cfg: OpenClawConfig): string[] {
   const lineConfig = cfg.channels?.line as LineConfig | undefined;
-  const accounts = lineConfig?.accounts;
-  const ids = new Set<string>();
-
-  // Add default account if configured at base level
-  if (
+  const hasBaseCredentials = Boolean(
     lineConfig?.channelAccessToken?.trim() ||
     lineConfig?.tokenFile ||
-    process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim()
-  ) {
-    ids.add(DEFAULT_ACCOUNT_ID);
-  }
-
-  // Add named accounts
-  if (accounts) {
-    for (const id of Object.keys(accounts)) {
-      ids.add(id);
-    }
-  }
-
-  return Array.from(ids);
+    process.env.LINE_CHANNEL_ACCESS_TOKEN?.trim(),
+  );
+  const preferred = normalizeOptionalAccountId(lineConfig?.defaultAccount);
+  const configuredAccountIds = [
+    ...new Set(
+      Object.keys(lineConfig?.accounts ?? {})
+        .filter(Boolean)
+        .map(normalizeSharedAccountId),
+    ),
+  ];
+  return listCombinedAccountIds({
+    configuredAccountIds,
+    implicitAccountId: hasBaseCredentials ? (preferred ?? DEFAULT_ACCOUNT_ID) : undefined,
+  });
 }
 
 export function resolveDefaultLineAccountId(cfg: OpenClawConfig): string {
-  const ids = listLineAccountIds(cfg);
-  if (ids.includes(DEFAULT_ACCOUNT_ID)) {
-    return DEFAULT_ACCOUNT_ID;
-  }
-  return ids[0] ?? DEFAULT_ACCOUNT_ID;
+  return resolveListedDefaultAccountId({
+    accountIds: listLineAccountIds(cfg),
+    configuredDefaultAccountId: normalizeOptionalAccountId(
+      (cfg.channels?.line as LineConfig | undefined)?.defaultAccount,
+    ),
+  });
 }
 
 export function normalizeAccountId(accountId: string | undefined): string {
-  const trimmed = accountId?.trim().toLowerCase();
-  if (!trimmed || trimmed === "default") {
-    return DEFAULT_ACCOUNT_ID;
-  }
-  return trimmed;
+  return normalizeSharedAccountId(accountId);
 }
