@@ -1,7 +1,7 @@
 import { normalizeProviderId } from "../agents/model-selection.js";
 import type { OpenClawConfig } from "../config/config.js";
 import { loadOpenClawPlugins } from "../plugins/loader.js";
-import { getActivePluginRegistry } from "../plugins/runtime.js";
+import { getActivePluginRegistry, getActivePluginRegistryKey } from "../plugins/runtime.js";
 import type { ImageGenerationProviderPlugin } from "../plugins/types.js";
 
 const BUILTIN_IMAGE_GENERATION_PROVIDERS: readonly ImageGenerationProviderPlugin[] = [];
@@ -15,13 +15,9 @@ function resolvePluginImageGenerationProviders(
   cfg?: OpenClawConfig,
 ): ImageGenerationProviderPlugin[] {
   const active = getActivePluginRegistry();
-  const activeEntries = active?.imageGenerationProviders?.map((entry) => entry.provider) ?? [];
-  if (activeEntries.length > 0 || !cfg) {
-    return activeEntries;
-  }
-  return loadOpenClawPlugins({ config: cfg }).imageGenerationProviders.map(
-    (entry) => entry.provider,
-  );
+  const registry =
+    getActivePluginRegistryKey() || !cfg ? active : loadOpenClawPlugins({ config: cfg });
+  return registry?.imageGenerationProviders?.map((entry) => entry.provider) ?? [];
 }
 
 function buildProviderMaps(cfg?: OpenClawConfig): {
